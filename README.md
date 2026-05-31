@@ -23,8 +23,8 @@ The backend is built with Python and Flask. Image processing is handled by OpenC
 
 # Team Members
 1. Bashita
-   Role: Backend Developer and Tester
-2. Lalitha Shree D
    Role: Backend Developer and Data collector
+2. Lalitha Shree D
+   Role: Backend Developer and Tester
 3. Kavinaya P
    Role: Frontend Developer and UI Designer
