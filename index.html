@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>BrailleVision — Real-Time Braille Reader</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #faf8f4;
+      --surface: #ffffff;
+      --surface2: #f2ede6;
+      --surface3: #ebe4d8;
+      --accent: #c84b1f;
+      --accent2: #e06030;
+      --accent-light: #fde8e0;
+      --accent-dim: rgba(200,75,31,0.12);
+      --text: #1a1410;
+      --text-muted: #8c7b6e;
+      --text-light: #b8a898;
+      --border: #e0d6cc;
+      --border-strong: #c8bdb0;
+      --danger: #c0392b;
+      --warn: #d68910;
+      --shadow-sm: 0 1px 3px rgba(26,20,16,0.08), 0 1px 2px rgba(26,20,16,0.05);
+      --shadow-md: 0 4px 16px rgba(26,20,16,0.1), 0 2px 6px rgba(26,20,16,0.06);
+      --shadow-lg: 0 12px 40px rgba(26,20,16,0.14), 0 4px 12px rgba(26,20,16,0.08);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Syne', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Noise texture overlay ── */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.4;
+    }
+
+    /* ── Braille canvas background ── */
+    #braille-bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    #braille-bg canvas {
+      width: 100%;
+      height: 100%;
+      filter: blur(1.8px) saturate(0.7);
+      opacity: 0.18;
+      mix-blend-mode: multiply;
+    }
+
+    /* Soft vignette over braille bg so edges fade away */
+    #braille-bg::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(
+        ellipse 80% 70% at 50% 50%,
+        transparent 30%,
+        rgba(250,248,244,0.7) 70%,
+        rgba(250,248,244,0.95) 100%
+      );
+      pointer-events: none;
+    }
+
+    /* ── Header ── */
+    header {
+      position: relative;
+      z-index: 10;
+      padding: 1.5rem 3rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(250,248,244,0.9);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    .logo { display: flex; align-items: center; gap: 1rem; }
+
+    .logo-icon {
+      width: 40px; height: 40px;
+      background: var(--accent);
+      border-radius: 10px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      padding: 7px;
+      box-shadow: 0 2px 8px rgba(200,75,31,0.35);
+    }
+
+    .logo-dot {
+      background: rgba(255,255,255,0.95);
+      border-radius: 50%;
+      transition: transform 0.3s ease;
+    }
+    .logo-icon:hover .logo-dot { transform: scale(1.15); }
+    .logo-dot.off { background: rgba(255,255,255,0.3); }
+
+    .logo h1 {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.35rem;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: -0.5px;
+    }
+
+    .logo p {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 300;
+      letter-spacing: 0.3px;
+    }
+
+    .badge {
+      background: var(--surface);
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+      padding: 0.4rem 0.9rem;
+      border-radius: 100px;
+      border: 1.5px solid var(--border);
+      box-shadow: var(--shadow-sm);
+      letter-spacing: 0.2px;
+    }
+
+    /* ── Main ── */
+    main {
+      position: relative;
+      z-index: 1;
+      max-width: 1060px;
+      margin: 0 auto;
+      padding: 3.5rem 2rem 4rem;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      display: grid;
+      align-items: end;
+      gap: 2rem;
+      margin-bottom: 3.5rem;
+      padding-bottom: 3rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    @media (max-width: 640px) {
+      .hero { grid-template-columns: 1fr; }
+      header { padding: 1.25rem 1.5rem; }
+    }
+
+    .hero-eyebrow {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      font-weight: 400;
+      color: var(--accent);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .hero-eyebrow::before {
+      content: '';
+      display: inline-block;
+      width: 22px;
+      height: 1.5px;
+      background: var(--accent);
+    }
+
+    .hero h2 {
+      font-size: clamp(2.2rem, 4.5vw, 3.4rem);
+      font-weight: 800;
+      line-height: 1.08;
+      letter-spacing: -1.5px;
+      color: var(--text);
+    }
+
+    .hero h2 em {
+      font-style: normal;
+      color: var(--accent);
+      position: relative;
+    }
+
+    .hero h2 em::after {
+      content: '';
+      position: absolute;
+      bottom: 2px;
+      left: 0; right: 0;
+      height: 3px;
+      background: var(--accent);
+      border-radius: 2px;
+      opacity: 0.3;
+    }
+
+    .hero-desc {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1.65;
+      max-width: 400px;
+      font-weight: 400;
+    }
+
+    .hero-stat {
+      text-align: right;
+    }
+
+    .hero-stat-num {
+      font-family: 'Syne', sans-serif;
+      font-size: 3.5rem;
+      font-weight: 800;
+      color: var(--text);
+      line-height: 1;
+      letter-spacing: -2px;
+    }
+
+    .hero-stat-label {
+      font-size: 0.75rem;
+      color: var(--text-light);
+      font-family: 'JetBrains Mono', monospace;
+      text-align: right;
+      margin-top: 0.3rem;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      border: 1.5px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 2rem;
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 1rem 1.25rem;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-family: 'Syne', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: all 0.22s cubic-bezier(.4,0,.2,1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      letter-spacing: 0.1px;
+    }
+
+    .tab-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .tab-btn:hover:not(.active) {
+      background: var(--surface2);
+      color: var(--text);
+    }
+
+    .tab-btn:not(:last-child) { border-right: 1.5px solid var(--border); }
+
+    /* ── Panel ── */
+    .panel { display: none; }
+    .panel.active { display: block; animation: fadeUp 0.3s ease; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Upload zone ── */
+    .upload-zone {
+      border: 2px dashed var(--border-strong);
+      border-radius: 20px;
+      padding: 4rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.22s ease;
+      background: var(--surface);
+      position: relative;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .upload-zone::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 100%, rgba(200,75,31,0.04) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .upload-zone:hover,
+    .upload-zone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-light);
+      box-shadow: var(--shadow-md);
+      transform: translateY(-2px);
+    }
+
+    .upload-zone input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .upload-icon {
+      font-size: 2.8rem;
+      margin-bottom: 1.25rem;
+      display: block;
+      filter: grayscale(0.2);
+    }
+
+    .upload-zone h3 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.3px;
+    }
+
+    .upload-zone p {
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 300;
+    }
+
+    /* ── Preview grid ── */
+    .preview-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+      margin-top: 1.5rem;
+    }
+
+    @media (max-width: 640px) { .preview-grid { grid-template-columns: 1fr; } }
+
+    .preview-box {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.2s;
+    }
+
+    .preview-box:hover { box-shadow: var(--shadow-md); }
+
+    .preview-label {
+      padding: 0.65rem 1.1rem;
+      font-size: 0.7rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+      color: var(--text-muted);
+      border-bottom: 1.5px solid var(--border);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      background: var(--surface2);
+    }
+
+    .preview-box img {
+      width: 100%;
+      height: 220px;
+      object-fit: contain;
+      display: block;
+      background: var(--surface3);
+    }
+
+    /* ── Webcam ── */
+    #webcam-container {
+      position: relative;
+      border-radius: 20px;
+      overflow: hidden;
+      background: #111;
+      border: 1.5px solid var(--border);
+      box-shadow: var(--shadow-md);
+    }
+
+    #webcam { width: 100%; max-height: 400px; object-fit: cover; display: block; }
+
+    .webcam-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    .scan-frame {
+      width: 70%; height: 60%;
+      border: 2px solid rgba(200,75,31,0.9);
+      border-radius: 12px;
+      box-shadow:
+        0 0 0 9999px rgba(0,0,0,0.45),
+        0 0 0 2px rgba(200,75,31,0.2),
+        inset 0 0 24px rgba(200,75,31,0.08);
+      animation: scanPulse 2.5s ease-in-out infinite;
+    }
+
+    /* Corner accents on scan frame */
+    .scan-frame::before,
+    .scan-frame::after {
+      content: '';
+      position: absolute;
+      width: 18px; height: 18px;
+      border-color: var(--accent);
+      border-style: solid;
+    }
+    .scan-frame::before { top: -2px; left: -2px; border-width: 3px 0 0 3px; border-radius: 4px 0 0 0; }
+    .scan-frame::after  { bottom: -2px; right: -2px; border-width: 0 3px 3px 0; border-radius: 0 0 4px 0; }
+
+    @keyframes scanPulse {
+      0%, 100% { border-color: rgba(200,75,31,0.9); box-shadow: 0 0 0 9999px rgba(0,0,0,0.45), 0 0 20px rgba(200,75,31,0.3); }
+      50%       { border-color: rgba(224,96,48,1);   box-shadow: 0 0 0 9999px rgba(0,0,0,0.45), 0 0 32px rgba(224,96,48,0.5); }
+    }
+
+    /* ── Result panel ── */
+    .result-panel {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 20px;
+      padding: 1.75rem;
+      margin-top: 1.5rem;
+      box-shadow: var(--shadow-md);
+    }
+
+    .result-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.1rem;
+    }
+
+    .result-header span {
+      font-size: 0.7rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1.8px;
+    }
+
+    .result-text {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.45rem;
+      font-weight: 500;
+      color: var(--accent);
+      word-break: break-all;
+      min-height: 3rem;
+      padding: 1.1rem 1.25rem;
+      background: var(--surface2);
+      border-radius: 12px;
+      border: 1.5px solid var(--border);
+      letter-spacing: 0.5px;
+    }
+
+    /* ── Guidance boxes ── */
+    .guidance-box {
+      margin-top: 1rem;
+      padding: 0.85rem 1.1rem;
+      border-radius: 12px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      letter-spacing: 0.1px;
+    }
+
+    .guidance-box.success {
+      background: #edf7f0;
+      color: #1a6e3a;
+      border: 1.5px solid #b6dfc5;
+    }
+
+    .guidance-box.warn {
+      background: #fef9ec;
+      color: #8a5c00;
+      border: 1.5px solid #f5d889;
+    }
+
+    .guidance-box.error {
+      background: #fdf0ef;
+      color: #9b2020;
+      border: 1.5px solid #f0bcb8;
+    }
+
+    /* ── Stats row ── */
+    .stats-row {
+      display: flex;
+      gap: 0.875rem;
+      margin-top: 1rem;
+    }
+
+    .stat {
+      flex: 1;
+      background: var(--surface2);
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      padding: 0.9rem 0.75rem;
+      text-align: center;
+      transition: box-shadow 0.2s;
+    }
+
+    .stat:hover { box-shadow: var(--shadow-sm); }
+
+    .stat-val {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.7rem;
+      font-weight: 800;
+      color: var(--accent);
+      display: block;
+      letter-spacing: -0.5px;
+      line-height: 1;
+      margin-bottom: 0.3rem;
+    }
+
+    .stat-label {
+      font-size: 0.67rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 400;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.8rem 1.5rem;
+      border-radius: 12px;
+      border: none;
+      cursor: pointer;
+      font-family: 'Syne', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: all 0.2s cubic-bezier(.4,0,.2,1);
+      letter-spacing: 0.1px;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(200,75,31,0.3);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent2);
+      box-shadow: 0 4px 16px rgba(200,75,31,0.4);
+      transform: translateY(-1px);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--accent);
+      border: 1.5px solid var(--border-strong);
+    }
+
+    .btn-outline:hover {
+      background: var(--accent-light);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    /* ── Webcam controls ── */
+    .webcam-controls {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 1.25rem;
+      flex-wrap: wrap;
+    }
+
+    /* ── Auto scan indicator ── */
+    #auto-scan-indicator {
+      font-size: 0.8rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.85rem;
+      font-weight: 400;
+    }
+
+    .dot-blink {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: blink 1.2s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.15} }
+
+    /* ── Spinner ── */
+    .spinner {
+      width: 20px; height: 20px;
+      border: 2.5px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Loading state ── */
+    .loading-state {
+      text-align: center;
+      padding: 2.5rem 2rem;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 20px;
+      margin-top: 1.5rem;
+    }
+
+    .loading-state p {
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      font-weight: 300;
+      margin-top: 1rem;
+      letter-spacing: 0.3px;
+    }
+
+    /* ── Footer ── */
+    footer {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-light);
+      font-size: 0.75rem;
+      border-top: 1px solid var(--border);
+      margin-top: 4rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 300;
+      letter-spacing: 0.3px;
+      background: var(--surface2);
+    }
+
+    footer strong {
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    /* ── Divider line decoration ── */
+    .section-line {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .section-line::before,
+    .section-line::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .section-line span {
+      font-size: 0.65rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-light);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      white-space: nowrap;
+    }
+
+    /* ── Braille Unicode typographic wallpaper ── */
+    #braille-text-bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    #braille-text-bg-inner {
+      position: absolute;
+      inset: -60px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      filter: blur(3px);
+      transform: rotate(-5deg) scale(1.12);
+      transform-origin: center center;
+    }
+
+    .braille-text-row {
+      display: block;
+      white-space: nowrap;
+      font-size: clamp(3rem, 6vw, 5.5rem);
+      line-height: 1.1;
+      letter-spacing: 0.2em;
+      user-select: none;
+      color: #c84b1f;
+    }
+
+    .braille-text-row:nth-child(odd)  { opacity: 0.07; }
+    .braille-text-row:nth-child(even) { opacity: 0.042; }
+    .braille-text-row:nth-child(3n)   { opacity: 0.09; color: #a03a18; }
+    .braille-text-row:nth-child(5n)   { opacity: 0.032; }
+    .braille-text-row:nth-child(7n)   { opacity: 0.06; color: #d4601f; }
+
+    /* Centre vignette so background reads as atmospheric, not distracting */
+    #braille-text-bg::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(
+        ellipse 85% 70% at 50% 50%,
+        rgba(250,248,244,0.88) 0%,
+        rgba(250,248,244,0.6)  40%,
+        rgba(250,248,244,0.18) 72%,
+        transparent 100%
+      );
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">
+      <div class="logo-dot"></div><div class="logo-dot off"></div>
+      <div class="logo-dot"></div><div class="logo-dot"></div>
+      <div class="logo-dot off"></div><div class="logo-dot"></div>
+    </div>
+    <div>
+      <h1>Dots2Text</h1>
+      <p>Real-Time Braille Reader</p>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="hero">
+    <h2>Read Physical Braille<br></h2>
+    <p>Upload a photo or use your webcam to detect real embossed Braille and convert it to English text and speech.</p>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('upload', this)">📁 Upload Image</button>
+    <button class="tab-btn" onclick="switchTab('webcam', this)">📷 Live Webcam</button>
+  </div>
+
+  <!-- Upload Panel -->
+  <div id="panel-upload" class="panel active">
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" id="file-input" accept="image/*" onchange="handleFileUpload(event)"/>
+      <span class="upload-icon">🖐</span>
+      <h3>Drop a Braille image here</h3>
+      <p>Supports JPG, PNG, WEBP — photographs of physical Braille paper</p>
+    </div>
+
+    <div class="preview-grid" id="upload-preview" style="display:none">
+      <div class="preview-box">
+        <div class="preview-label">Original</div>
+        <img id="original-img" src="" alt="Original"/>
+      </div>
+      <div class="preview-box">
+        <div class="preview-label">Detected Dots</div>
+        <img id="annotated-img" src="" alt="Annotated"/>
+      </div>
+    </div>
+
+    <div id="upload-result"></div>
+  </div>
+
+  <!-- Webcam Panel -->
+  <div id="panel-webcam" class="panel">
+    <div id="webcam-container">
+      <video id="webcam" autoplay playsinline muted></video>
+      <canvas id="snapshot-canvas" style="display:none"></canvas>
+      <div class="webcam-overlay">
+        <div class="scan-frame"></div>
+      </div>
+    </div>
+
+    <div class="webcam-controls">
+      <button class="btn btn-primary" onclick="startWebcam()" id="start-cam-btn">▶ Start Camera</button>
+      <button class="btn btn-outline" onclick="captureAndDecode()" id="capture-btn" disabled>📸 Capture & Decode</button>
+      <button class="btn btn-outline" onclick="toggleAutoScan()" id="auto-btn" disabled>⟳ Auto Scan: OFF</button>
+    </div>
+
+    <div id="auto-scan-indicator" style="display:none">
+      <div class="dot-blink"></div> Auto-scanning every 3 seconds...
+    </div>
+
+    <div id="webcam-result"></div>
+  </div>
+</main>
+
+<footer>BrailleVision — Built for the BrailleVision Hackathon 2025 · OpenCV + Flask + gTTS</footer>
+
+<script>
+  function switchTab(tab, btn) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('panel-' + tab).classList.add('active');
+    btn.classList.add('active');
+  }
+
+  // ---- Upload ----
+  const uploadZone = document.getElementById('upload-zone');
+  uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+  uploadZone.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) processFile(file);
+  });
+
+  function handleFileUpload(e) {
+    const file = e.target.files[0];
+    if (file) processFile(file);
+  }
+
+  async function processFile(file) {
+    const url = URL.createObjectURL(file);
+    document.getElementById('original-img').src = url;
+    document.getElementById('upload-preview').style.display = 'grid';
+    document.getElementById('upload-result').innerHTML = renderLoading();
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/decode', { method: 'POST', body: formData });
+      const data = await res.json();
+      renderResult('upload-result', data, 'annotated-img');
+    } catch (err) {
+      document.getElementById('upload-result').innerHTML = renderError('Server error: ' + err.message);
+    }
+  }
+
+  // ---- Webcam ----
+  let webcamStream = null;
+  let autoScanInterval = null;
+  let autoScanOn = false;
+
+  async function startWebcam() {
+    try {
+      webcamStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 } }
+      });
+      document.getElementById('webcam').srcObject = webcamStream;
+      document.getElementById('start-cam-btn').textContent = '✓ Camera On';
+      document.getElementById('capture-btn').disabled = false;
+      document.getElementById('auto-btn').disabled = false;
+    } catch (err) {
+      alert('Camera error: ' + err.message);
+    }
+  }
+
+  async function captureAndDecode() {
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('snapshot-canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+
+    const base64 = canvas.toDataURL('image/jpeg', 0.9);
+    document.getElementById('webcam-result').innerHTML = renderLoading();
+
+    try {
+      const res = await fetch('/api/decode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64 })
+      });
+      const data = await res.json();
+      renderResult('webcam-result', data, null);
+    } catch (err) {
+      document.getElementById('webcam-result').innerHTML = renderError('Server error: ' + err.message);
+    }
+  }
+
+  function toggleAutoScan() {
+    autoScanOn = !autoScanOn;
+    const btn = document.getElementById('auto-btn');
+    const indicator = document.getElementById('auto-scan-indicator');
+    if (autoScanOn) {
+      btn.textContent = '⏹ Auto Scan: ON';
+      indicator.style.display = 'flex';
+      autoScanInterval = setInterval(captureAndDecode, 3000);
+    } else {
+      btn.textContent = '⟳ Auto Scan: OFF';
+      indicator.style.display = 'none';
+      clearInterval(autoScanInterval);
+    }
+  }
+
+  // ---- Helpers ----
+  function renderLoading() {
+    return `<div class="result-panel" style="text-align:center;padding:2rem">
+      <div class="spinner" style="margin:0 auto 1rem;width:30px;height:30px;border-width:3px"></div>
+      <p style="color:var(--text-muted)">Processing Braille image...</p>
+    </div>`;
+  }
+
+  function renderError(msg) {
+    return `<div class="guidance-box error" style="margin-top:1rem">⚠ ${msg}</div>`;
+  }
+
+  function renderResult(containerId, data, annotatedImgId) {
+    if (data.error) {
+      document.getElementById(containerId).innerHTML = renderError(data.error);
+      return;
+    }
+
+    if (annotatedImgId && data.annotated_image) {
+      document.getElementById(annotatedImgId).src = 'data:image/jpeg;base64,' + data.annotated_image;
+    }
+
+    const guidanceClass = data.text && data.text !== '(unrecognized pattern)'
+      ? 'success' : data.guidance.includes('dark') || data.guidance.includes('small')
+      ? 'warn' : 'error';
+    const guidanceIcon = guidanceClass === 'success' ? '✓' : guidanceClass === 'warn' ? '⚠' : '✗';
+
+    document.getElementById(containerId).innerHTML = `
+      <div class="result-panel">
+        <div class="result-header">
+          <span>Decoded Output</span>
+          <button class="btn btn-outline" style="padding:0.4rem 0.9rem;font-size:0.8rem"
+            onclick="speak('${escapeStr(data.text)}')">🔊 Speak</button>
+        </div>
+        <div class="result-text">${data.text || '—'}</div>
+        <div class="guidance-box ${guidanceClass}">${guidanceIcon} ${data.guidance}</div>
+        <div class="stats-row">
+          <div class="stat"><span class="stat-val">${data.dot_count}</span><span class="stat-label">Dots Found</span></div>
+          <div class="stat"><span class="stat-val">${data.cell_count}</span><span class="stat-label">Cells Decoded</span></div>
+          <div class="stat"><span class="stat-val">${data.text ? data.text.replace(/[^a-zA-Z0-9]/g,'').length : 0}</span><span class="stat-label">Characters</span></div>
+        </div>
+      </div>`;
+  }
+
+  function escapeStr(str) {
+    return (str || '').replace(/'/g, "\\'").replace(/"/g, '\\"');
+  }
+
+  async function speak(text) {
+    if (!text || text === '(unrecognized pattern)') return;
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      const data = await res.json();
+      if (data.audio) {
+        const audio = new Audio('data:audio/mpeg;base64,' + data.audio);
+        audio.play();
+      }
+    } catch(e) {
+      if ('speechSynthesis' in window) {
+        const utt = new SpeechSynthesisUtterance(text);
+        window.speechSynthesis.speak(utt);
+      }
+    }
+  }
+</script>
+</body>
+</html>
