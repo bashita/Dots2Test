@@ -5,13 +5,33 @@ from braille_map import decode_braille_sequence
 
 def preprocess_image(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    denoised = cv2.fastNlMeansDenoising(gray, h=10)
+
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    clahe = cv2.createCLAHE(
+        clipLimit=2.0,
+        tileGridSize=(8, 8)
+    )
+
+    enhanced = clahe.apply(gray)
+
     thresh = cv2.adaptiveThreshold(
-        denoised, 255,
+        enhanced,
+        255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV,
-        blockSize=15, C=4
+        21,
+        8
     )
+
+    kernel = np.ones((3,3), np.uint8)
+
+    thresh = cv2.morphologyEx(
+        thresh,
+        cv2.MORPH_OPEN,
+        kernel
+    )
+
     return thresh
 
 
